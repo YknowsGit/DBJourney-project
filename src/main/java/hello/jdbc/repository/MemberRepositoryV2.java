@@ -1,6 +1,5 @@
 package hello.jdbc.repository;
 
-import hello.jdbc.connection.DBConnectionUtil;
 import hello.jdbc.domain.Member;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.support.JdbcUtils;
@@ -13,19 +12,14 @@ import java.sql.SQLException;
 import java.util.NoSuchElementException;
 
 /*
- * JDBC - DataSource 사용, JdbcUtils 사용
+ * JDBC - ConnectionParam
  */
 @Slf4j
-public class MemberRepositoryV1 {
-    /* DI
-    DriverManagerDataSource -> HikariDataSource로 변경해도 MemberRepositoryV1의 코드는
-    전혀 변경하지 않아도 된다. MemberRepositoryV1는 DataSource 인터페이스에만 의존하기 때문이다.
-    이것이 "DataSource"를 사용하는 장점이다. (DI + OCP)
-    ★ "DataSource" => 커넥션을 획득하는 방법을 추상화
-     */
+public class MemberRepositoryV2 {
+
     private final DataSource dataSource;
 
-    public MemberRepositoryV1(DataSource dataSource) {
+    public MemberRepositoryV2(DataSource dataSource) {
         this.dataSource = dataSource;
     }
 
@@ -82,6 +76,38 @@ public class MemberRepositoryV1 {
         }
     }
 
+    // [추가] 계좌이체 서비스 로직에서 호출하는 메서드
+    public Member findById(Connection con, String memberId) throws SQLException {
+        String sql = "select * from member where member_id = ?";
+
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+
+        try {
+            pstmt = con.prepareStatement(sql);
+            pstmt.setString(1, memberId);
+
+            rs = pstmt.executeQuery();
+            if (rs.next()) {
+                Member member = new Member();
+                member.setMemberId(rs.getString("member_id"));
+                member.setMoney(rs.getInt("money"));
+                return member;
+            } else {
+                throw new NoSuchElementException("member not found memberId=" + memberId);
+            }
+
+        } catch (SQLException e) {
+            log.error("db error", e);
+            throw e;
+        } finally {
+            // connection은 여기서 닫지 않는다.
+            JdbcUtils.closeResultSet(rs);
+            JdbcUtils.closeStatement(pstmt);
+//            JdbcUtils.closeConnection(con);
+        }
+    }
+
     // JDBC 개발 - 변경(CRUD - U)
     public void update(String memberId, int money) throws SQLException {
         String sql = "update member set money=? where member_id=?";
@@ -106,6 +132,28 @@ public class MemberRepositoryV1 {
             throw e;
         } finally {
             close(con, pstmt, null);
+        }
+    }
+
+    // [추가] 계좌이체 서비스 로직에서 호출하는 메서드
+    public void update(Connection con, String memberId, int money) throws SQLException {
+        String sql = "update member set money=? where member_id=?";
+
+        PreparedStatement pstmt = null;
+
+        try {
+            pstmt = con.prepareStatement(sql);
+            pstmt.setInt(1, money);
+            pstmt.setString(2, memberId);
+            pstmt.executeUpdate();
+
+        } catch (SQLException e) {
+            log.error("db error", e);
+            throw e;
+        } finally {
+            // connection은 여기서 닫지 않는다.
+            JdbcUtils.closeStatement(pstmt);
+//            JdbcUtils.closeConnection(con);
         }
     }
 
@@ -143,12 +191,12 @@ public class MemberRepositoryV1 {
 
 }
 /*
-DataSource 의존관계 주입
-외부에서 DataSource를 주입 받아서 사용한다. 이제 직접 만든 DBConnectionUtil을 사용하지 않아도 된다.
-DataSource는 표준 인터페이스 이기 때문에 DriverManagerDataSource에서 HikariDataSource로 변경되어도
-해당 코드를 변경하지 않아도 된다.
+주의 - 코드에서 다음 부분을 주의해서 보자!
 
-JdbcUtils 편의 메서드
-스프링은 JDBC를 편리하게 다룰 수 있는 JbcUtils라는 편의 메서드를 제공한다.
-JdbcUtils를 사용하면 커넥션을 좀 더 편리하게 닫을 수 있다.
+1. 커넥션 유지가 필요한 두 메서드는 파라미터로 넘어온 커넥션을 사용해야 한다.
+따라서 con = getConnection()코드가 있으면 안된다.
+ `
+2. 커넥션 유지가 필요한 두 메서드는 리포지토리에서 커넥션을 닫으면 안된다.
+커넥션을 전달 받은 리포지토리 뿐만 아니라 이후에도 커넥션을 계속 이어서 사용하기 때문이다.
+이후 서비스 로직이 끝날 때 트랜잭션을 종료하고 닫아야 한다.
  */
