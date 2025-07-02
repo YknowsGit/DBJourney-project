@@ -62,7 +62,6 @@ public class UnCheckedAppTest {
                 // ★ 예외를 전환할 때는 꼭! 기존 예외를 포함하자!
             }
         }
-
         public void runSQL() throws SQLException {
             throw new SQLException("ex");
         }
